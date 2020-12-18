@@ -20,16 +20,16 @@ void intHandler(int dummy) {
 
 #define STEPCNT (1024)
 #define POP (30000)
-#define INPCNT (18)
+#define INPCNT (9)
 #define OPCNT (1)
 #define GENCNT (500000000)
 #define PRATE (1)
-#define MUPROB (0.001)
+#define MUPROB (0.01)
 #define PRGSIZE (4 * STEPCNT)
 #define TRIALS (64)
 #define PGENR (1)
 #define TOURNSIZE (8)
-#define ELITE (4)
+#define ELITE (20)
 
 uint64_t rstate[4];
 uint64_t rstate2[4];
@@ -136,7 +136,7 @@ double getFitness(uint64_t* mem, prog* prog, const uint64_t* i, uint64_t icnt, c
     double err = 0;
 
     for (uint64_t x = 0; x < ocnt; ++x) {
-        mem[255 - x] &= 1LU;
+        mem[255 - x] %= 289;
         uint64_t ma = max(o[x], mem[255 - x]);
         uint64_t mi = min(o[x], mem[255 - x]);
         uint64_t ri = (ma - mi);
@@ -185,7 +185,7 @@ void seedr(uint64_t a) {
 }
 
 int main() {
-    uint64_t seed = 512; // time(NULL);
+    uint64_t seed = 512;// time(NULL);
     signal(SIGINT, intHandler);
 
     seedr(seed);
@@ -237,7 +237,7 @@ int main() {
     }
     memset(mem, 0, sizeof(uint64_t) * 256);
 
-    printf("%u\n", CNT);
+    printf("%lu\n", seed);
     printf("Setup complete.\n");
 
     prog* bestProg;
@@ -258,15 +258,12 @@ int main() {
         uint64_t* currOu = oarr + (t * OPCNT);
 
         mpz_urandomm(curr, gmpr, maxMod);
-        mpz_urandomm(curr2, gmpr, maxMod);
-        // mpz_ui_pow_ui(curr2, 2, (r()) % 289);
-        // mpz_mod(curr4, curr, curr2);
+        mpz_ui_pow_ui(curr2, 2, (r()) % 289);
+        mpz_mod(curr4, curr, curr2);
 
-        fromgmp(currIn, curr, curr3);
-        fromgmp(currIn + 9, curr2, curr3);
+        fromgmp(currIn, curr4, curr3);
 
-        int cmpr = mpz_cmp(curr, curr2);
-        (*currOu) = (cmpr > 0);
+        (*currOu) = mpz_sizeinbase(curr4, 2);
     }
 
     for (uint64_t gen = 0; gen < GENCNT; ++gen) {
@@ -274,23 +271,22 @@ int main() {
 
         rstate2[r() % 4] ^= r(); /* Inject randomness into RNG */
 
+        /*
         if (gen % PGENR == 0) {
             for (uint64_t t = 0; t < TRIALS; ++t) {
                 uint64_t* currIn = iarr + (t * INPCNT);
                 uint64_t* currOu = oarr + (t * OPCNT);
 
                 mpz_urandomm(curr, gmpr, maxMod);
-                mpz_urandomm(curr2, gmpr, maxMod);
-                // mpz_ui_pow_ui(curr2, 2, (r()) % 289);
-                // mpz_mod(curr4, curr, curr2);
+                mpz_ui_pow_ui(curr2, 2, (r()) % 289);
+                mpz_mod(curr4, curr, curr2);
 
-                fromgmp(currIn, curr, curr3);
-                fromgmp(currIn + 9, curr2, curr3);
+                fromgmp(currIn, curr4, curr3);
 
-                int cmpr = mpz_cmp(curr, curr2);
-                (*currOu) = (cmpr > 0);
+                (*currOu) = mpz_sizeinbase(curr4, 2);
             }
         }
+         */
 
         /* Shuffle parents */
         /* No need to shuffle anymore if I'm picking randomly I guess? */
@@ -321,7 +317,10 @@ int main() {
                 p[currP]->lastScore += getFitness(mem, p[currP], currIn, INPCNT, currOu, OPCNT);
             }
 
-            // p[currP]->lastScore /= TRIALS;
+            p[currP]->lastScore /= TRIALS;
+        }
+
+        for (uint64_t currP = 0; currP < POP; ++currP) {
             totScore += p[currP]->lastScore;
 
             if (p[currP]->lastScore < bestProg->lastScore) {
@@ -360,16 +359,15 @@ int main() {
             mutProb(children[ch]);
         }
 
-        /* Sets current generation's children as next
-         * generation's parents */
+        /* Copies best parent into child array */
+        for (uint64_t r = 0; r < ELITE; ++r) {
+            copyProg(children[r], el[r]);
+        }
+
+        /* Swaps parent array with child array */
         prog** progswitch = p;
         p = children;
         children = progswitch;
-
-        /* Copies best parent into child array */
-        for (uint64_t r = 0; r < ELITE; ++r) {
-            copyProg(children[r2() % POP], el[r]);
-        }
 
         /* Print progress */
         if (gen % PRATE == 0) printf(" %10lu : %25.2f %25.2f\n", gen, totScore / (POP), bestProg->lastScore);
