@@ -79,6 +79,8 @@ typedef struct {
     uint64_t csize;
 
     uint64_t iptr;
+
+    double lastScore;
 } prog;
 
 void run(prog* p, uint64_t* mem, uint64_t steps);

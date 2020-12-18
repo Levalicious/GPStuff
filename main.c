@@ -20,12 +20,12 @@ void intHandler(int dummy) {
 
 
 #define STEPCNT (1024)
-#define POP (30000)
+#define POP (300)
 #define INPCNT (9)
 #define OPCNT (1)
 #define GENCNT (500000)
-#define PRATE (16)
-#define MUPROB (0.0005)
+#define PRATE (32)
+#define MUPROB (0.005)
 #define PRGSIZE (4 * STEPCNT)
 #define TRIALS (64)
 #define PGENR (1)
@@ -106,6 +106,7 @@ void fromgmp(rnum c, mpz_t a, mpz_t temp) {
 
 void randomProg(prog* pr) {
     for (uint64_t i = 0; i < pr->csize; ++i) pr->code[i] = r();
+    pr->lastScore = 1.7976931348623158e+308;
 }
 
 prog* initProg(uint64_t size) {
@@ -120,6 +121,8 @@ prog* initProg(uint64_t size) {
         printf("Failed to allocate program code.\n");
         exit(-1);
     }
+    out->lastScore = 1.7976931348623158e+308;
+
     return out;
 }
 
@@ -132,13 +135,14 @@ double getFitness(uint64_t* mem, prog* prog, const uint64_t* i, uint64_t icnt, c
     double err = 0;
 
     for (uint64_t x = 0; x < ocnt; ++x) {
-        uint64_t ma = max(o[x], mem[x]);
-        uint64_t mi = min(o[x], mem[x]);
+        uint64_t ma = max(o[x], mem[255 - x]);
+        uint64_t mi = min(o[x], mem[255 - x]);
         uint64_t ri = (ma - mi);
         err += ri;
     }
 
     memset(mem, 0, sizeof(uint64_t) * 256);
+    prog->lastScore = err;
     return err;
 }
 
@@ -180,7 +184,7 @@ void seedr(uint64_t a) {
 }
 
 int main() {
-    uint64_t seed = time(NULL);
+    uint64_t seed = 512; // time(NULL);
     signal(SIGINT, intHandler);
 
     seedr(seed);
@@ -212,10 +216,10 @@ int main() {
     uint64_t* mem = malloc(sizeof(uint64_t) * 256);
     memset(mem, 0, sizeof(uint64_t) * 256);
 
-    printf("%lu\n", CNT);
+    printf("%u\n", CNT);
     printf("Setup complete.\n");
 
-    prog* bestProg;
+    prog* bestProg = p[0];
 
     for (uint64_t t = 0; t < TRIALS; ++t) {
         uint64_t* currIn = iarr + (t * INPCNT);
@@ -261,83 +265,52 @@ int main() {
         }
          */
 
-        double bestScore, totScore;
-        bestScore = 1.7976931348623158e+308;
+        double totScore;
         totScore = 0;
+        /* Run eval on every prog in parent array */
+        for (uint64_t currP = 0; currP < POP; ++currP) {
+            for (uint64_t t = 0; t < TRIALS; ++t) {
+                uint64_t* currIn = iarr + (t * INPCNT);
+                uint64_t* currOu = oarr + (t * OPCNT);
+
+                getFitness(mem, p[currP], currIn, INPCNT, currOu, OPCNT);
+            }
+
+            p[currP]->lastScore /= TRIALS;
+            totScore += p[currP]->lastScore;
+
+            if (p[currP]->lastScore < bestProg->lastScore) {
+                bestProg = p[currP];
+            }
+        }
+
         for (uint64_t ch = 0; ch < POP; ++ch) {
             /* Pick 3 random programs from the parent pool */
             prog* a = p[r2() % POP];
             prog* b = p[r2() % POP];
             prog* c = p[r2() % POP];
 
-            double sa, sb, sc;
-            sa = 0;
-            sb = 0;
-            sc = 0;
-
-            /* Score the programs on this generation's problem set */
-            for (uint64_t t = 0; t < TRIALS; ++t) {
-                uint64_t* currIn = iarr + (t * INPCNT);
-                uint64_t* currOu = oarr + (t * OPCNT);
-
-                sa += getFitness(mem, a, currIn, INPCNT, currOu, OPCNT);
-                sb += getFitness(mem, b, currIn, INPCNT, currOu, OPCNT);
-                sc += getFitness(mem, c, currIn, INPCNT, currOu, OPCNT);
-            }
-
-            /* Normalize scores */
-            sa /= TRIALS;
-            sb /= TRIALS;
-            sc /= TRIALS;
-
-
             double temps;
             prog* tempp;
 
             /* 3-item sorting network, sort programs by score */
-            if (sc < sb) {
-                temps = sb;
+            if (c->lastScore < b->lastScore) {
                 tempp = b;
-
-                sb = sc;
                 b = c;
-
-                sc = temps;
                 c = tempp;
             }
 
-            if (sb < sa) {
-                temps = sa;
+            if (b->lastScore < a->lastScore) {
                 tempp = a;
-
-                sa = sb;
                 a = b;
-
-                sb = temps;
                 b = tempp;
             }
 
-            if (sc < sb) {
-                temps = sb;
+            if (c->lastScore < b->lastScore) {
                 tempp = b;
-
-                sb = sc;
                 b = c;
-
-                sc = temps;
                 c = tempp;
             }
-
-            /* Keep pointer to best one of this generation */
-            if (sa < bestScore) {
-                bestScore = sa;
-                bestProg = a;
-            }
-
-            /* Aggregate approximate total score */
-            totScore += sa;
-            totScore += sb;
-            totScore += sc;
 
             /* Cross the two good programs */
             scross(children[ch], a, b);
@@ -356,7 +329,7 @@ int main() {
         copyProg(children[r2() % POP], bestProg);
 
         /* Print progress */
-        if (gen % PRATE == 0) printf(" %10lu : %25.2f %25.2f\n", gen, totScore / (3 * POP), bestScore);
+        if (gen % PRATE == 0) printf(" %10lu : %25.2f %25.2f\n", gen, totScore / (POP), bestProg->lastScore);
     }
 
     /* Write best program to output file */
