@@ -185,7 +185,7 @@ void seedr(uint64_t a) {
 }
 
 int main() {
-    uint64_t seed = 512;// time(NULL);
+    uint64_t seed = time(NULL);
     signal(SIGINT, intHandler);
 
     seedr(seed);
