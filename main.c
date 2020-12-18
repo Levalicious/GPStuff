@@ -4,7 +4,6 @@
 #include "rns.h"
 #include <gmp.h>
 #include <string.h>
-#include <math.h>
 #include <signal.h>
 #include <time.h>
 
@@ -20,15 +19,17 @@ void intHandler(int dummy) {
 
 
 #define STEPCNT (1024)
-#define POP (300)
-#define INPCNT (9)
+#define POP (30000)
+#define INPCNT (18)
 #define OPCNT (1)
-#define GENCNT (500000)
-#define PRATE (32)
-#define MUPROB (0.005)
+#define GENCNT (500000000)
+#define PRATE (1)
+#define MUPROB (0.001)
 #define PRGSIZE (4 * STEPCNT)
 #define TRIALS (64)
 #define PGENR (1)
+#define TOURNSIZE (8)
+#define ELITE (4)
 
 uint64_t rstate[4];
 uint64_t rstate2[4];
@@ -135,6 +136,7 @@ double getFitness(uint64_t* mem, prog* prog, const uint64_t* i, uint64_t icnt, c
     double err = 0;
 
     for (uint64_t x = 0; x < ocnt; ++x) {
+        mem[255 - x] &= 1LU;
         uint64_t ma = max(o[x], mem[255 - x]);
         uint64_t mi = min(o[x], mem[255 - x]);
         uint64_t ri = (ma - mi);
@@ -142,7 +144,6 @@ double getFitness(uint64_t* mem, prog* prog, const uint64_t* i, uint64_t icnt, c
     }
 
     memset(mem, 0, sizeof(uint64_t) * 256);
-    prog->lastScore = err;
     return err;
 }
 
@@ -190,18 +191,34 @@ int main() {
     seedr(seed);
 
     prog ** p = malloc(sizeof(prog*) * POP);
+    if (p == NULL) {
+        printf("Failed to allocate parent array.\n");
+        exit(-1);
+    }
     for (uint64_t i = 0; i < POP; ++i) {
         p[i] = initProg(PRGSIZE);
         randomProg(p[i]);
     }
 
     prog** children = malloc(sizeof(prog*) * POP);
+    if (children == NULL) {
+        printf("Failed to allocate child array.\n");
+        exit(-1);
+    }
     for (uint64_t i = 0; i < POP; ++i) {
         children[i] = initProg(PRGSIZE);
     }
 
-    uint64_t iarr[INPCNT * TRIALS];
-    uint64_t oarr[OPCNT * TRIALS];
+    uint64_t* iarr = malloc(sizeof(uint64_t) * INPCNT * TRIALS);
+    if (iarr == NULL) {
+        printf("Failed to allocate input array.\n");
+        exit(-1);
+    }
+    uint64_t* oarr = malloc(sizeof(uint64_t) * OPCNT * TRIALS);
+    if (oarr == NULL) {
+        printf("Failed to allocate output array.\n");
+        exit(-1);
+    }
 
     mpz_t curr, curr2, curr3, curr4, maxMod;
     mpz_inits(curr, curr2, curr3, curr4, maxMod, NULL);
@@ -214,24 +231,42 @@ int main() {
     gmp_randseed_ui(gmpr, r());
 
     uint64_t* mem = malloc(sizeof(uint64_t) * 256);
+    if (mem == NULL) {
+        printf("Failed to allocate memory array.\n");
+        exit(-1);
+    }
     memset(mem, 0, sizeof(uint64_t) * 256);
 
     printf("%u\n", CNT);
     printf("Setup complete.\n");
 
-    prog* bestProg = p[0];
+    prog* bestProg;
+
+    prog** el = malloc(sizeof(prog*) * ELITE);
+    if (el == NULL) {
+        printf("Failed to allocate elite array.\n");
+        exit(-1);
+    }
+    prog** tourn = malloc(sizeof(prog*) * TOURNSIZE);
+    if (tourn == NULL) {
+        printf("Failed to allocate tournament array.\n");
+        exit(-1);
+    }
 
     for (uint64_t t = 0; t < TRIALS; ++t) {
         uint64_t* currIn = iarr + (t * INPCNT);
         uint64_t* currOu = oarr + (t * OPCNT);
 
         mpz_urandomm(curr, gmpr, maxMod);
-        mpz_ui_pow_ui(curr2, 2, (r()) % 289);
-        mpz_mod(curr4, curr, curr2);
+        mpz_urandomm(curr2, gmpr, maxMod);
+        // mpz_ui_pow_ui(curr2, 2, (r()) % 289);
+        // mpz_mod(curr4, curr, curr2);
 
-        fromgmp(currIn, curr4, curr3);
+        fromgmp(currIn, curr, curr3);
+        fromgmp(currIn + 9, curr2, curr3);
 
-        (*currOu) = mpz_sizeinbase(curr4, 2);
+        int cmpr = mpz_cmp(curr, curr2);
+        (*currOu) = (cmpr > 0);
     }
 
     for (uint64_t gen = 0; gen < GENCNT; ++gen) {
@@ -245,12 +280,15 @@ int main() {
                 uint64_t* currOu = oarr + (t * OPCNT);
 
                 mpz_urandomm(curr, gmpr, maxMod);
-                mpz_ui_pow_ui(curr2, 2, (r()) % 289);
-                mpz_mod(curr4, curr, curr2);
+                mpz_urandomm(curr2, gmpr, maxMod);
+                // mpz_ui_pow_ui(curr2, 2, (r()) % 289);
+                // mpz_mod(curr4, curr, curr2);
 
-                fromgmp(currIn, curr4, curr3);
+                fromgmp(currIn, curr, curr3);
+                fromgmp(currIn + 9, curr2, curr3);
 
-                (*currOu) = mpz_sizeinbase(curr4, 2);
+                int cmpr = mpz_cmp(curr, curr2);
+                (*currOu) = (cmpr > 0);
             }
         }
 
@@ -268,52 +306,55 @@ int main() {
         double totScore;
         totScore = 0;
         /* Run eval on every prog in parent array */
+        bestProg = p[0];
+
+        for (uint64_t z = 0; z < ELITE; ++z) {
+            el[z] = p[z];
+        }
+
         for (uint64_t currP = 0; currP < POP; ++currP) {
+            p[currP]->lastScore = 0;
             for (uint64_t t = 0; t < TRIALS; ++t) {
                 uint64_t* currIn = iarr + (t * INPCNT);
                 uint64_t* currOu = oarr + (t * OPCNT);
 
-                getFitness(mem, p[currP], currIn, INPCNT, currOu, OPCNT);
+                p[currP]->lastScore += getFitness(mem, p[currP], currIn, INPCNT, currOu, OPCNT);
             }
 
-            p[currP]->lastScore /= TRIALS;
+            // p[currP]->lastScore /= TRIALS;
             totScore += p[currP]->lastScore;
 
             if (p[currP]->lastScore < bestProg->lastScore) {
                 bestProg = p[currP];
             }
+
+            for (uint64_t z = 0; z < ELITE; ++z) {
+                if (p[currP]->lastScore < el[z]->lastScore) {
+                    el[z] = p[currP];
+                    break;
+                }
+            }
         }
 
         for (uint64_t ch = 0; ch < POP; ++ch) {
-            /* Pick 3 random programs from the parent pool */
-            prog* a = p[r2() % POP];
-            prog* b = p[r2() % POP];
-            prog* c = p[r2() % POP];
-
-            double temps;
-            prog* tempp;
-
-            /* 3-item sorting network, sort programs by score */
-            if (c->lastScore < b->lastScore) {
-                tempp = b;
-                b = c;
-                c = tempp;
+            /* Pick K random programs from parent pool */
+            for (uint64_t tsel = 0; tsel < TOURNSIZE; ++tsel) {
+                tourn[tsel] = p[r2() % POP];
             }
 
-            if (b->lastScore < a->lastScore) {
-                tempp = a;
-                a = b;
-                b = tempp;
+            /* Sort selections by score */
+            for (uint64_t r = 0; r < TOURNSIZE - 1; ++r) {
+                uint64_t minind = r;
+                for (uint64_t rr = r + 1; rr < TOURNSIZE; ++rr) {
+                    if (tourn[rr]->lastScore < tourn[minind]->lastScore) minind = rr;
+                }
+                prog* sw = tourn[minind];
+                tourn[minind] = tourn[r];
+                tourn[r] = sw;
             }
 
-            if (c->lastScore < b->lastScore) {
-                tempp = b;
-                b = c;
-                c = tempp;
-            }
-
-            /* Cross the two good programs */
-            scross(children[ch], a, b);
+            /* Cross the two best programs */
+            scross(children[ch], tourn[0], tourn[1]);
 
             /* Mutate the child */
             mutProb(children[ch]);
@@ -326,7 +367,9 @@ int main() {
         children = progswitch;
 
         /* Copies best parent into child array */
-        copyProg(children[r2() % POP], bestProg);
+        for (uint64_t r = 0; r < ELITE; ++r) {
+            copyProg(children[r2() % POP], el[r]);
+        }
 
         /* Print progress */
         if (gen % PRATE == 0) printf(" %10lu : %25.2f %25.2f\n", gen, totScore / (POP), bestProg->lastScore);
@@ -347,6 +390,10 @@ int main() {
         free(children[i]);
     }
 
+    free(tourn);
+    free(iarr);
+    free(oarr);
+    free(el);
     free(p);
     free(children);
     free(mem);
