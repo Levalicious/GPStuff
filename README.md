@@ -16,6 +16,7 @@ Parallelization
 
 Two approaches:
 Parallelize the fitness evaluation loop
+- Currently what I'm doing. Because figuring out island-island exchange is pain and I don't want to do that yet.
 
 Advantages:
 - Easy to do. Possibly 1 line of OpenMP directives
