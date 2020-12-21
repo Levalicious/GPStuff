@@ -3,7 +3,7 @@ project(RNS2 C)
 
 set(CMAKE_C_STANDARD 11)
 
-set(CMAKE_C_FLAGS "-O3")
+set(CMAKE_C_FLAGS "-O3 -fopenmp")
 
 add_executable(RNS2 main.c vm.c vm.h rns.c rns.h util.h)
 

@@ -258,4 +258,5 @@ void run(prog* p, uint64_t* mem, uint64_t steps) {
         i31:
         break;
     }
+    p->steps = i;
 }

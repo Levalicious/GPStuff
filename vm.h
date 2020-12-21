@@ -81,6 +81,7 @@ typedef struct {
     uint64_t iptr;
 
     double lastScore;
+    uint64_t steps;
 } prog;
 
 void run(prog* p, uint64_t* mem, uint64_t steps);

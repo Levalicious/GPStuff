@@ -6,6 +6,7 @@
 #include <string.h>
 #include <signal.h>
 #include <time.h>
+#include <math.h>
 
 static volatile int keepRunning = 1;
 
@@ -18,18 +19,19 @@ void intHandler(int dummy) {
 #define ceil(a, b) (((a) + (b) - 1LU) / (b))
 
 
-#define STEPCNT (1024)
-#define POP (30000)
-#define INPCNT (9)
+#define STEPCNT (512)
+#define POP (1000)
+#define INPCNT (18)
 #define OPCNT (1)
 #define GENCNT (500000000)
 #define PRATE (1)
-#define MUPROB (0.01)
+#define MUPROB (0.001)
 #define PRGSIZE (4 * STEPCNT)
-#define TRIALS (64)
-#define PGENR (1)
+#define TRIALS (8192 * 2)
+#define PGENR (GENCNT)
 #define TOURNSIZE (8)
 #define ELITE (20)
+#define MURATE (0.1)
 
 uint64_t rstate[4];
 uint64_t rstate2[4];
@@ -128,6 +130,9 @@ prog* initProg(uint64_t size) {
 }
 
 double getFitness(uint64_t* mem, prog* prog, const uint64_t* i, uint64_t icnt, const uint64_t* o, uint64_t ocnt) {
+    uint64_t mem2[256];
+    memset(mem2, 0, sizeof(uint64_t) * 256);
+    mem = mem2;
     memcpy(mem, i, sizeof(uint64_t) * icnt);
     /* Set memory */
 
@@ -136,20 +141,20 @@ double getFitness(uint64_t* mem, prog* prog, const uint64_t* i, uint64_t icnt, c
     double err = 0;
 
     for (uint64_t x = 0; x < ocnt; ++x) {
-        mem[255 - x] %= 289;
+        mem[255 - x] %= 2;
         uint64_t ma = max(o[x], mem[255 - x]);
         uint64_t mi = min(o[x], mem[255 - x]);
         uint64_t ri = (ma - mi);
         err += ri;
     }
 
-    memset(mem, 0, sizeof(uint64_t) * 256);
+    // memset(mem, 0, sizeof(uint64_t) * 256);
     return err;
 }
 
-void mutProb(prog* prog) {
+void mutProb(prog* prog, double mu) {
     for (uint64_t i = 0; i < prog->csize; ++i) {
-        if (rf2() < MUPROB) prog->code[i] = r2();
+        if (rf2() < mu) prog->code[i] = r2();
     }
 }
 
@@ -230,6 +235,10 @@ int main() {
     gmp_randinit_default(gmpr);
     gmp_randseed_ui(gmpr, r());
 
+    double mu = MUPROB;
+
+    double prevScore;
+
     uint64_t* mem = malloc(sizeof(uint64_t) * 256);
     if (mem == NULL) {
         printf("Failed to allocate memory array.\n");
@@ -247,12 +256,16 @@ int main() {
         printf("Failed to allocate elite array.\n");
         exit(-1);
     }
+
+    /*
     prog** tourn = malloc(sizeof(prog*) * TOURNSIZE);
     if (tourn == NULL) {
         printf("Failed to allocate tournament array.\n");
         exit(-1);
     }
+     */
 
+    /*
     for (uint64_t t = 0; t < TRIALS; ++t) {
         uint64_t* currIn = iarr + (t * INPCNT);
         uint64_t* currOu = oarr + (t * OPCNT);
@@ -265,39 +278,30 @@ int main() {
 
         (*currOu) = mpz_sizeinbase(curr4, 2);
     }
+     */
 
     for (uint64_t gen = 0; gen < GENCNT; ++gen) {
         if (!keepRunning) break;
 
         rstate2[r() % 4] ^= r(); /* Inject randomness into RNG */
 
-        /*
         if (gen % PGENR == 0) {
             for (uint64_t t = 0; t < TRIALS; ++t) {
                 uint64_t* currIn = iarr + (t * INPCNT);
                 uint64_t* currOu = oarr + (t * OPCNT);
 
                 mpz_urandomm(curr, gmpr, maxMod);
-                mpz_ui_pow_ui(curr2, 2, (r()) % 289);
-                mpz_mod(curr4, curr, curr2);
+                mpz_urandomm(curr2, gmpr, maxMod);
+                // mpz_ui_pow_ui(curr2, 2, (r()) % 289);
+                // mpz_mod(curr4, curr, curr2);
 
-                fromgmp(currIn, curr4, curr3);
+                fromgmp(currIn, curr, curr3);
+                fromgmp(currIn + 9, curr2, curr3);
 
-                (*currOu) = mpz_sizeinbase(curr4, 2);
+                int cmpRes = mpz_cmp(curr, curr2);
+                (*currOu) = (cmpRes > 0) ? (1) : (0); // mpz_sizeinbase(curr4, 2);
             }
         }
-         */
-
-        /* Shuffle parents */
-        /* No need to shuffle anymore if I'm picking randomly I guess? */
-        /*
-        for (uint64_t i = POP - 1; i > 0; --i) {
-            uint64_t j = (r2() % (i + 1));
-            prog* temp = p[j];
-            p[j] = p[i];
-            p[i] = temp;
-        }
-         */
 
         double totScore;
         totScore = 0;
@@ -308,13 +312,14 @@ int main() {
             el[z] = p[z];
         }
 
+        #pragma omp parallel for default(none), shared(p,iarr,oarr), num_threads(6), schedule(static)
         for (uint64_t currP = 0; currP < POP; ++currP) {
             p[currP]->lastScore = 0;
             for (uint64_t t = 0; t < TRIALS; ++t) {
                 uint64_t* currIn = iarr + (t * INPCNT);
                 uint64_t* currOu = oarr + (t * OPCNT);
 
-                p[currP]->lastScore += getFitness(mem, p[currP], currIn, INPCNT, currOu, OPCNT);
+                p[currP]->lastScore += getFitness(NULL, p[currP], currIn, INPCNT, currOu, OPCNT);
             }
 
             p[currP]->lastScore /= TRIALS;
@@ -335,7 +340,9 @@ int main() {
             }
         }
 
+    #pragma omp parallel for default(none), shared(p,iarr,oarr,children,mu), num_threads(6), schedule(static)
         for (uint64_t ch = 0; ch < POP; ++ch) {
+            prog* tourn[TOURNSIZE];
             /* Pick K random programs from parent pool */
             for (uint64_t tsel = 0; tsel < TOURNSIZE; ++tsel) {
                 tourn[tsel] = p[r2() % POP];
@@ -356,7 +363,7 @@ int main() {
             scross(children[ch], tourn[0], tourn[1]);
 
             /* Mutate the child */
-            mutProb(children[ch]);
+            mutProb(children[ch], mu);
         }
 
         /* Copies best parent into child array */
@@ -370,7 +377,14 @@ int main() {
         children = progswitch;
 
         /* Print progress */
-        if (gen % PRATE == 0) printf(" %10lu : %25.2f %25.2f\n", gen, totScore / (POP), bestProg->lastScore);
+        if (gen % PRATE == 0) printf(" %10lu : %25.6f %25.6f %10lu %25.10f\n", gen, totScore / (POP), bestProg->lastScore, bestProg->steps, mu);
+        if (fabs(prevScore - bestProg->lastScore) < 0.001) {
+            mu += (mu * MURATE);
+        } else {
+            mu = MUPROB;
+        }
+        if (mu > 0.5) mu = MUPROB;
+        prevScore = bestProg->lastScore;
     }
 
     /* Write best program to output file */
@@ -388,7 +402,7 @@ int main() {
         free(children[i]);
     }
 
-    free(tourn);
+    // free(tourn);
     free(iarr);
     free(oarr);
     free(el);
