@@ -19,59 +19,30 @@ void intHandler(int dummy) {
 #define ceil(a, b) (((a) + (b) - 1LU) / (b))
 
 
-#define STEPCNT (512)
-#define POP (1000)
+#define STEPCNT (64)
+#define POP (3000)
 #define INPCNT (18)
 #define OPCNT (1)
 #define GENCNT (500000000)
 #define PRATE (1)
-#define MUPROB (0.001)
+#define MUPROB (0.01)
 #define PRGSIZE (4 * STEPCNT)
 #define TRIALS (8192 * 2)
 #define PGENR (GENCNT)
 #define TOURNSIZE (8)
-#define ELITE (20)
-#define MURATE (0.1)
+#define ELITE (4)
+#define MURATE (0.01)
 
-uint64_t rstate[4];
-uint64_t rstate2[4];
-
-int32_t* fstate = (int32_t *) rstate;
-int32_t* fstate2 = (int32_t *) rstate2;
-
-float rf() {
+float rf(uint64_t* rstate) {
+    int32_t* fstate = (int32_t *) rstate;
     float res;
     fstate[0] *= 16807;
     *((uint32_t *) &res) = (((uint32_t) fstate[0]) >> 9U) | 0x3f800000;
     return (res - 1.f);
 }
 
-float rf2() {
-    float res;
-    fstate2[0] *= 16807;
-    *((uint32_t *) &res) = (((uint32_t) fstate2[0]) >> 9U) | 0x3f800000;
-    return (res - 1.f);
-}
-
-
-uint64_t r() {
+uint64_t r(uint64_t* rstate) {
     uint64_t *s = rstate;
-    uint64_t const result = ((s[1] * 5 << 7) | (s[1] * 5 >> (64 - 7))) * 9;
-    uint64_t const t = s[1] << 17;
-
-    s[2] ^= s[0];
-    s[3] ^= s[1];
-    s[1] ^= s[2];
-    s[0] ^= s[3];
-
-    s[2] ^= t;
-    s[3] = (s[3] << 45) | (s[3] >> (64 - 45));
-
-    return result;
-}
-
-uint64_t r2() {
-    uint64_t *s = rstate2;
     uint64_t const result = ((s[1] * 5 << 7) | (s[1] * 5 >> (64 - 7))) * 9;
     uint64_t const t = s[1] << 17;
 
@@ -107,8 +78,8 @@ void fromgmp(rnum c, mpz_t a, mpz_t temp) {
     c[8] = mpz_get_ui(temp);
 }
 
-void randomProg(prog* pr) {
-    for (uint64_t i = 0; i < pr->csize; ++i) pr->code[i] = r();
+void randomProg(prog* pr, uint64_t* rstate) {
+    for (uint64_t i = 0; i < pr->csize; ++i) pr->code[i] = r(rstate);
     pr->lastScore = 1.7976931348623158e+308;
 }
 
@@ -130,9 +101,6 @@ prog* initProg(uint64_t size) {
 }
 
 double getFitness(uint64_t* mem, prog* prog, const uint64_t* i, uint64_t icnt, const uint64_t* o, uint64_t ocnt) {
-    uint64_t mem2[256];
-    memset(mem2, 0, sizeof(uint64_t) * 256);
-    mem = mem2;
     memcpy(mem, i, sizeof(uint64_t) * icnt);
     /* Set memory */
 
@@ -141,20 +109,20 @@ double getFitness(uint64_t* mem, prog* prog, const uint64_t* i, uint64_t icnt, c
     double err = 0;
 
     for (uint64_t x = 0; x < ocnt; ++x) {
-        mem[255 - x] %= 2;
+        mem[255 - x] &= 1LU;
         uint64_t ma = max(o[x], mem[255 - x]);
         uint64_t mi = min(o[x], mem[255 - x]);
         uint64_t ri = (ma - mi);
         err += ri;
     }
 
-    // memset(mem, 0, sizeof(uint64_t) * 256);
+    memset(mem, 0, sizeof(uint64_t) * 256);
     return err;
 }
 
-void mutProb(prog* prog, double mu) {
+void mutProb(prog* prog, double mu, uint64_t* rstate) {
     for (uint64_t i = 0; i < prog->csize; ++i) {
-        if (rf2() < mu) prog->code[i] = r2();
+        if (rf(rstate) < mu) prog->code[i] = r(rstate);
     }
 }
 
@@ -162,10 +130,10 @@ void copyProg(prog* c, prog* a) {
     memcpy(c->code, a->code, sizeof(uint8_t) * a->csize);
 }
 
-void scross(prog* c, prog* a, prog* b) {
+void scross(prog* c, prog* a, prog* b, uint64_t* rstate) {
     uint64_t xover, afirst;
-    afirst = r2() & 1LU;
-    xover = r2() % a->csize;
+    afirst = r(rstate) & 1LU;
+    xover = r(rstate) % a->csize;
 
     uint64_t i;
     if (afirst) {
@@ -177,23 +145,26 @@ void scross(prog* c, prog* a, prog* b) {
     }
 }
 
-void seedr(uint64_t a) {
-    rstate[0] = 0xb6d47cfacccc53f8LU ^ a;
-    rstate[1] = 0x30b319a052624be7LU ^ a;
-    rstate[2] = 0xfbeb173c6d0227d8LU ^ a;
-    rstate[3] = 0x99cfe60a00bdd4feLU ^ a;
-
-    rstate2[0] = r();
-    rstate2[1] = r();
-    rstate2[2] = r();
-    rstate2[3] = r();
-}
-
 int main() {
-    uint64_t seed = time(NULL);
-    signal(SIGINT, intHandler);
+    uint64_t* rstate = malloc(sizeof(uint64_t) * 4);
+    uint64_t* rstate2 = malloc(sizeof(uint64_t) * 4);
+    if (rstate == NULL || rstate2 == NULL) {
+        printf("Failed to allocate RNGs\n");
+        exit(-1);
+    }
+    uint64_t seed = 1608608479;// time(NULL);
 
-    seedr(seed);
+    rstate[0] = 0xb6d47cfacccc53f8LU ^ seed;
+    rstate[1] = 0x30b319a052624be7LU ^ seed;
+    rstate[2] = 0xfbeb173c6d0227d8LU ^ seed;
+    rstate[3] = 0x99cfe60a00bdd4feLU ^ seed;
+
+    rstate2[0] = r(rstate);
+    rstate2[1] = r(rstate);
+    rstate2[2] = r(rstate);
+    rstate2[3] = r(rstate);
+
+    signal(SIGINT, intHandler);
 
     prog ** p = malloc(sizeof(prog*) * POP);
     if (p == NULL) {
@@ -202,7 +173,7 @@ int main() {
     }
     for (uint64_t i = 0; i < POP; ++i) {
         p[i] = initProg(PRGSIZE);
-        randomProg(p[i]);
+        randomProg(p[i], rstate);
     }
 
     prog** children = malloc(sizeof(prog*) * POP);
@@ -233,7 +204,7 @@ int main() {
 
     gmp_randstate_t gmpr;
     gmp_randinit_default(gmpr);
-    gmp_randseed_ui(gmpr, r());
+    gmp_randseed_ui(gmpr, r(rstate));
 
     double mu = MUPROB;
 
@@ -257,33 +228,16 @@ int main() {
         exit(-1);
     }
 
-    /*
     prog** tourn = malloc(sizeof(prog*) * TOURNSIZE);
     if (tourn == NULL) {
         printf("Failed to allocate tournament array.\n");
         exit(-1);
     }
-     */
-
-    /*
-    for (uint64_t t = 0; t < TRIALS; ++t) {
-        uint64_t* currIn = iarr + (t * INPCNT);
-        uint64_t* currOu = oarr + (t * OPCNT);
-
-        mpz_urandomm(curr, gmpr, maxMod);
-        mpz_ui_pow_ui(curr2, 2, (r()) % 289);
-        mpz_mod(curr4, curr, curr2);
-
-        fromgmp(currIn, curr4, curr3);
-
-        (*currOu) = mpz_sizeinbase(curr4, 2);
-    }
-     */
 
     for (uint64_t gen = 0; gen < GENCNT; ++gen) {
         if (!keepRunning) break;
 
-        rstate2[r() % 4] ^= r(); /* Inject randomness into RNG */
+        rstate2[r(rstate) % 4] ^= r(rstate); /* Inject randomness into RNG */
 
         if (gen % PGENR == 0) {
             for (uint64_t t = 0; t < TRIALS; ++t) {
@@ -299,32 +253,42 @@ int main() {
                 fromgmp(currIn + 9, curr2, curr3);
 
                 int cmpRes = mpz_cmp(curr, curr2);
-                (*currOu) = (cmpRes > 0) ? (1) : (0); // mpz_sizeinbase(curr4, 2);
+                (*currOu) = t & 1LU;
+                cmpRes = (cmpRes > 0);
+                if (cmpRes == (*currOu)) {
+                    fromgmp(currIn, curr, curr3);
+                    fromgmp(currIn + 9, curr2, curr3);
+                } else {
+                    fromgmp(currIn, curr2, curr3);
+                    fromgmp(currIn + 9, curr, curr3);
+                }
+                // (*currOu) = (cmpRes > 0) ? (1) : (0); // mpz_sizeinbase(curr4, 2);
             }
         }
 
         double totScore;
         totScore = 0;
-        /* Run eval on every prog in parent array */
         bestProg = p[0];
 
+        /* Fill elite array with valid parent programs (doesn't matter which ones) */
         for (uint64_t z = 0; z < ELITE; ++z) {
             el[z] = p[z];
         }
 
-        #pragma omp parallel for default(none), shared(p,iarr,oarr), num_threads(6), schedule(static)
+        /* Run fitness eval for each parent */
         for (uint64_t currP = 0; currP < POP; ++currP) {
             p[currP]->lastScore = 0;
             for (uint64_t t = 0; t < TRIALS; ++t) {
                 uint64_t* currIn = iarr + (t * INPCNT);
                 uint64_t* currOu = oarr + (t * OPCNT);
 
-                p[currP]->lastScore += getFitness(NULL, p[currP], currIn, INPCNT, currOu, OPCNT);
+                p[currP]->lastScore += getFitness(mem, p[currP], currIn, INPCNT, currOu, OPCNT);
             }
 
-            p[currP]->lastScore /= TRIALS;
+            // p[currP]->lastScore /= TRIALS;
         }
 
+        /* Update total score, find best program, and set elite */
         for (uint64_t currP = 0; currP < POP; ++currP) {
             totScore += p[currP]->lastScore;
 
@@ -340,12 +304,11 @@ int main() {
             }
         }
 
-    #pragma omp parallel for default(none), shared(p,iarr,oarr,children,mu), num_threads(6), schedule(static)
+        /* Select and reproduce programs */
         for (uint64_t ch = 0; ch < POP; ++ch) {
-            prog* tourn[TOURNSIZE];
             /* Pick K random programs from parent pool */
             for (uint64_t tsel = 0; tsel < TOURNSIZE; ++tsel) {
-                tourn[tsel] = p[r2() % POP];
+                tourn[tsel] = p[r(rstate2) % POP];
             }
 
             /* Sort selections by score */
@@ -360,29 +323,34 @@ int main() {
             }
 
             /* Cross the two best programs */
-            scross(children[ch], tourn[0], tourn[1]);
+            scross(children[ch], tourn[0], tourn[1], rstate2);
 
             /* Mutate the child */
-            mutProb(children[ch], mu);
+            mutProb(children[ch], mu, rstate2);
         }
 
-        /* Copies best parent into child array */
+        /* Copy elite programs into child array */
         for (uint64_t r = 0; r < ELITE; ++r) {
             copyProg(children[r], el[r]);
         }
 
-        /* Swaps parent array with child array */
+        /* Swap parent array with child array */
         prog** progswitch = p;
         p = children;
         children = progswitch;
 
         /* Print progress */
         if (gen % PRATE == 0) printf(" %10lu : %25.6f %25.6f %10lu %25.10f\n", gen, totScore / (POP), bestProg->lastScore, bestProg->steps, mu);
+
+        /* If there was no improvement, increase mutation rate
+         * to escape this local optimum. If there was an improvment,
+         * reset to original mutation rate */
         if (fabs(prevScore - bestProg->lastScore) < 0.001) {
             mu += (mu * MURATE);
         } else {
             mu = MUPROB;
         }
+        /* If mutation rate is greater than 50%, reset to original rate */
         if (mu > 0.5) mu = MUPROB;
         prevScore = bestProg->lastScore;
     }
@@ -402,13 +370,15 @@ int main() {
         free(children[i]);
     }
 
-    // free(tourn);
+    free(tourn);
     free(iarr);
     free(oarr);
     free(el);
     free(p);
     free(children);
     free(mem);
+    free(rstate);
+    free(rstate2);
 
     printf("Seed: %lu\n", seed);
 }
