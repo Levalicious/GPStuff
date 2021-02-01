@@ -18,20 +18,51 @@ void intHandler(int dummy) {
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 #define ceil(a, b) (((a) + (b) - 1LU) / (b))
 
+// #define LOADNTEST
 
-#define STEPCNT (64)
-#define POP (3000)
+
+#define STEPCNT (256)
+#define POP (1024)
 #define INPCNT (18)
 #define OPCNT (1)
-#define GENCNT (500000000)
+#define GENCNT (5000000)
+#define SRATE (0.7)
+#define RRATE (0.3)
+#define MUS (0.001)
 #define PRATE (1)
-#define MUPROB (0.01)
-#define PRGSIZE (4 * STEPCNT)
-#define TRIALS (8192 * 2)
+#define MUPROB (0.004)
+#define PRGSIZE (STEPCNT)
+#define TRIALS (8192 * 8)
 #define PGENR (GENCNT)
-#define TOURNSIZE (8)
-#define ELITE (4)
-#define MURATE (0.01)
+#define TOURNSIZE (4)
+#define ELITE (1)
+#define MURATE (0.001)
+#define MINIMPR (0.0)
+
+uint64_t gcd(uint64_t a, uint64_t b)
+{
+    if (a == 0) return b;
+    if (b == 0) return a;
+
+    uint64_t sw;
+
+    int shift = __builtin_ctzl(a | b);
+    a >>= __builtin_ctzl(a);
+
+    do
+    {
+        b>>=__builtin_ctzl(b);
+
+        if (a > b) {
+            sw = a;
+            a = b;
+            b = sw;
+        }
+        b -= a;
+    } while (b);
+
+    return a << shift;
+}
 
 float rf(uint64_t* rstate) {
     int32_t* fstate = (int32_t *) rstate;
@@ -100,23 +131,41 @@ prog* initProg(uint64_t size) {
     return out;
 }
 
-double getFitness(uint64_t* mem, prog* prog, const uint64_t* i, uint64_t icnt, const uint64_t* o, uint64_t ocnt) {
-    memcpy(mem, i, sizeof(uint64_t) * icnt);
-    /* Set memory */
+double getFitness(stack* stk, prog* prog, const uint64_t* i, uint64_t icnt, const uint64_t* o, uint64_t ocnt) {
+    memcpy(stk->steak, i, sizeof(uint64_t) * icnt);
+    stk->size = icnt;
 
-    run(prog, mem, STEPCNT);
+    run(prog, stk, STEPCNT);
 
     double err = 0;
 
+    /*
+    mem[255] %= 4294966813;
+    mem[254] %= 4294966877;
+    mem[253] %= 4294966927;
+    mem[252] %= 4294966981;
+    mem[251] %= 4294967029;
+    mem[250] %= 4294967111;
+    mem[249] %= 4294967161;
+    mem[248] %= 4294967197;
+    mem[247] %= 4294967279;
+     */
+
     for (uint64_t x = 0; x < ocnt; ++x) {
-        mem[255 - x] &= 1LU;
-        uint64_t ma = max(o[x], mem[255 - x]);
-        uint64_t mi = min(o[x], mem[255 - x]);
+        if (stk->size == 0) {
+            err += 16.0 * UINT64_MAX;
+            continue;
+        }
+        uint64_t ta = pop(stk);
+        ta &= 1LU;
+        uint64_t ma = max(o[x], ta);
+        uint64_t mi = min(o[x], ta);
         uint64_t ri = (ma - mi);
         err += ri;
     }
 
-    memset(mem, 0, sizeof(uint64_t) * 256);
+    stk->size = 0;
+
     return err;
 }
 
@@ -124,6 +173,31 @@ void mutProb(prog* prog, double mu, uint64_t* rstate) {
     for (uint64_t i = 0; i < prog->csize; ++i) {
         if (rf(rstate) < mu) prog->code[i] = r(rstate);
     }
+}
+
+void mutSingleActive(prog* prog, uint64_t* rstate) {
+    uint64_t muInd = r(rstate) % (prog->steps | 1LU);
+    prog->code[muInd] = r(rstate);
+}
+
+void mutSingle(prog* prog, uint64_t* rstate) {
+    uint64_t muInd = r(rstate) % prog->csize;
+    prog->code[muInd] = r(rstate);
+}
+
+void loadProgram(prog* prog, char* path) {
+    FILE* in = fopen(path, "r");
+    fseek(in, 0L, SEEK_END);
+    uint64_t savedProglen = ftell(in);
+    rewind(in);
+    size_t actLen = min(prog->csize, savedProglen);
+    size_t res = fread(prog->code, sizeof(uint8_t), actLen, in);
+    if (res != actLen) {
+        printf("Read failed.\n");
+        exit(-1);
+    }
+
+    fclose(in);
 }
 
 void copyProg(prog* c, prog* a) {
@@ -137,11 +211,11 @@ void scross(prog* c, prog* a, prog* b, uint64_t* rstate) {
 
     uint64_t i;
     if (afirst) {
-        for (i = 0; i < xover; ++i) c->code[i] = a->code[i];
-        for (; i < a->csize; ++i) c->code[i] = b->code[i];
+        memcpy(c->code, a->code, xover);
+        memcpy(c->code + xover, b->code + xover,  (a->csize - xover));
     } else {
-        for (i = 0; i < xover; ++i) c->code[i] = b->code[i];
-        for (; i < a->csize; ++i) c->code[i] = a->code[i];
+        memcpy(c->code, b->code, xover);
+        memcpy(c->code + xover, a->code + xover,  (a->csize - xover));
     }
 }
 
@@ -152,7 +226,7 @@ int main() {
         printf("Failed to allocate RNGs\n");
         exit(-1);
     }
-    uint64_t seed = 1608608479;// time(NULL);
+    uint64_t seed = time(NULL);
 
     rstate[0] = 0xb6d47cfacccc53f8LU ^ seed;
     rstate[1] = 0x30b319a052624be7LU ^ seed;
@@ -164,7 +238,37 @@ int main() {
     rstate2[2] = r(rstate);
     rstate2[3] = r(rstate);
 
+    stack* stk = malloc(sizeof(stack));
+    if (stk == NULL) {
+        printf("Failed to allocate stack.\n");
+        exit(-1);
+    }
+
+    stk->steak = malloc(sizeof(uint64_t) * 512);
+    if (stk->steak == NULL) {
+        printf("Failed to allocate stack space.\n");
+        exit(-1);
+    }
+
+#ifdef LOADNTEST
+    prog* preeg = initProg(PRGSIZE);
+    loadProgram(preeg, "../bestProg.gpr");
+    uint64_t t4, t5;
+
+    t4 = r(rstate2);
+    t5 = r(rstate2);
+
+    stk->stk[0] = t4;
+    stk->stk[1] = t5;
+    stk->size = 2;
+
+    run(preeg, stk, STEPCNT);
+    return 0;
+#endif
+
     signal(SIGINT, intHandler);
+
+    uint64_t survivors = POP * SRATE;
 
     prog ** p = malloc(sizeof(prog*) * POP);
     if (p == NULL) {
@@ -190,11 +294,14 @@ int main() {
         printf("Failed to allocate input array.\n");
         exit(-1);
     }
+    memset(iarr, 0, sizeof(uint64_t) * INPCNT * TRIALS);
+
     uint64_t* oarr = malloc(sizeof(uint64_t) * OPCNT * TRIALS);
     if (oarr == NULL) {
         printf("Failed to allocate output array.\n");
         exit(-1);
     }
+    memset(iarr, 0, sizeof(uint64_t) * OPCNT * TRIALS);
 
     mpz_t curr, curr2, curr3, curr4, maxMod;
     mpz_inits(curr, curr2, curr3, curr4, maxMod, NULL);
@@ -208,19 +315,13 @@ int main() {
 
     double mu = MUPROB;
 
-    double prevScore;
-
-    uint64_t* mem = malloc(sizeof(uint64_t) * 256);
-    if (mem == NULL) {
-        printf("Failed to allocate memory array.\n");
-        exit(-1);
-    }
-    memset(mem, 0, sizeof(uint64_t) * 256);
+    double prevScore = 0.0;
 
     printf("%lu\n", seed);
     printf("Setup complete.\n");
 
-    prog* bestProg;
+    prog* bestProg = p[0];
+    bestProg->lastScore = 99999999999.0;
 
     prog** el = malloc(sizeof(prog*) * ELITE);
     if (el == NULL) {
@@ -244,25 +345,77 @@ int main() {
                 uint64_t* currIn = iarr + (t * INPCNT);
                 uint64_t* currOu = oarr + (t * OPCNT);
 
+                /* ActualGCD
+                uint64_t a = r(rstate);
+                uint64_t b = r(rstate);
+                uint64_t c = r(rstate);
+                a &= UINT32_MAX;
+                b &= UINT32_MAX;
+                c &= UINT32_MAX;
+                c %= a;
+                c %= b;
+
+                currIn[0] = a * c;
+                currIn[1] = b * c;
+
+                currOu[0] = gcd(currIn[0], currIn[1]);
+                 */
+                /* converter
+                mpz_urandomm(curr, gmpr, maxMod);
+                fromgmp(currIn, curr, curr3);
+
+                memset(currOu, 0, sizeof(uint64_t) * OPCNT);
+                mpz_export(currOu, NULL, -1, sizeof(uint64_t), 0, 0, curr);
+                */
+
+                /* modulus
                 mpz_urandomm(curr, gmpr, maxMod);
                 mpz_urandomm(curr2, gmpr, maxMod);
-                // mpz_ui_pow_ui(curr2, 2, (r()) % 289);
-                // mpz_mod(curr4, curr, curr2);
 
-                fromgmp(currIn, curr, curr3);
-                fromgmp(currIn + 9, curr2, curr3);
+                fromgmp(currIn, curr, curr3); // store dividend
+                fromgmp(currIn + 9, curr2, curr3); // store divisor
+
+                mpz_mod(curr4, curr, curr2);
+
+                fromgmp(currOu, curr4, curr); // store remainder
+                 */
+
+                /* comparison  */
+                mpz_urandomm(curr, gmpr, maxMod);
+                mpz_urandomm(curr2, gmpr, maxMod);
 
                 int cmpRes = mpz_cmp(curr, curr2);
                 (*currOu) = t & 1LU;
                 cmpRes = (cmpRes > 0);
-                if (cmpRes == (*currOu)) {
+                if (cmpRes > 0 == (*currOu) > 0) {
                     fromgmp(currIn, curr, curr3);
                     fromgmp(currIn + 9, curr2, curr3);
                 } else {
                     fromgmp(currIn, curr2, curr3);
                     fromgmp(currIn + 9, curr, curr3);
                 }
-                // (*currOu) = (cmpRes > 0) ? (1) : (0); // mpz_sizeinbase(curr4, 2);
+
+                /* log2
+                mpz_rrandomb(curr, gmpr, (t % 286) + 1);
+
+                fromgmp(currIn, curr, curr3);
+
+                (*currOu) = mpz_sizeinbase(curr, 2);
+                */
+
+                /* u256 add
+                mpz_urandomb(curr, gmpr, 128);
+                mpz_urandomb(curr2, gmpr, 128);
+
+                mpz_add(curr3, curr, curr2);
+
+                mpz_mod_2exp(curr4, curr3, 128);
+
+                mpz_export(currIn, NULL, -1, sizeof(uint64_t), 0, 32, curr);
+                mpz_export(currIn + OPCNT, NULL, -1, sizeof(uint64_t), 0, 32, curr2);
+
+                mpz_export(currOu, NULL, -1, sizeof(uint64_t), 0, 32, curr4);
+                 */
             }
         }
 
@@ -282,17 +435,25 @@ int main() {
                 uint64_t* currIn = iarr + (t * INPCNT);
                 uint64_t* currOu = oarr + (t * OPCNT);
 
-                p[currP]->lastScore += getFitness(mem, p[currP], currIn, INPCNT, currOu, OPCNT);
+                p[currP]->lastScore += getFitness(stk, p[currP], currIn, INPCNT, currOu, OPCNT);
             }
 
-            // p[currP]->lastScore /= TRIALS;
+            p[currP]->lastScore /= TRIALS;
         }
 
         /* Update total score, find best program, and set elite */
+        uint32_t vcnt = 0;
         for (uint64_t currP = 0; currP < POP; ++currP) {
-            totScore += p[currP]->lastScore;
+            if (p[currP]->lastScore < 2) {
+                totScore += (p[currP]->lastScore);
+                vcnt++;
+            }
 
             if (p[currP]->lastScore < bestProg->lastScore) {
+                bestProg = p[currP];
+            }
+
+            if (p[currP]->lastScore == bestProg->lastScore && p[currP]->steps < bestProg->steps) {
                 bestProg = p[currP];
             }
 
@@ -322,17 +483,22 @@ int main() {
                 tourn[r] = sw;
             }
 
-            /* Cross the two best programs */
-            scross(children[ch], tourn[0], tourn[1], rstate2);
+            if (ch < survivors) {
+                copyProg(children[ch], tourn[0]);
+            } else {
+                /* Cross the two best programs */
+                scross(children[ch], tourn[0], tourn[1], rstate2);
+            }
 
-            /* Mutate the child */
             mutProb(children[ch], mu, rstate2);
         }
 
         /* Copy elite programs into child array */
-        for (uint64_t r = 0; r < ELITE; ++r) {
-            copyProg(children[r], el[r]);
+        for (uint64_t rt = 0; rt < ELITE; ++rt) {
+            copyProg(children[rt], el[rt]);
         }
+
+        // copyProg(children[r(rstate2) % POP], bestProg);
 
         /* Swap parent array with child array */
         prog** progswitch = p;
@@ -340,15 +506,16 @@ int main() {
         children = progswitch;
 
         /* Print progress */
-        if (gen % PRATE == 0) printf(" %10lu : %25.6f %25.6f %10lu %25.10f\n", gen, totScore / (POP), bestProg->lastScore, bestProg->steps, mu);
+        if (gen % PRATE == 0) printf(" %10lu : %28.6f %28.6f %10lu %28.10f\n", gen, 1.0 - (totScore / vcnt), 1.0 - bestProg->lastScore, bestProg->steps, mu);
 
         /* If there was no improvement, increase mutation rate
          * to escape this local optimum. If there was an improvment,
          * reset to original mutation rate */
-        if (fabs(prevScore - bestProg->lastScore) < 0.001) {
-            mu += (mu * MURATE);
+        if (prevScore - MINIMPR <= bestProg->lastScore) {
+            mu += (MURATE * mu);
         } else {
-            mu = MUPROB;
+            mu += MUPROB * 3;
+            mu *= 0.25;
         }
         /* If mutation rate is greater than 50%, reset to original rate */
         if (mu > 0.5) mu = MUPROB;
@@ -376,35 +543,10 @@ int main() {
     free(el);
     free(p);
     free(children);
-    free(mem);
+    free(stk->steak);
+    free(stk);
     free(rstate);
     free(rstate2);
 
     printf("Seed: %lu\n", seed);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

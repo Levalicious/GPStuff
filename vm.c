@@ -1,6 +1,44 @@
 #include "vm.h"
+#include <stdio.h>
+#include <string.h>
 
-void run(prog* p, uint64_t* mem, uint64_t steps) {
+void push(stack* stk, uint64_t val) {
+    if (stk->size >= 512) return;
+    stk->steak[stk->size] = val;
+    stk->size++;
+}
+
+uint64_t pop(stack* stk) {
+    stk->size--;
+    return stk->steak[stk->size];
+}
+
+void swap(stack* stk, uint64_t ind) {
+    ind %= stk->size;
+    uint64_t t = stk->steak[stk->size - 1];
+    stk->steak[stk->size - 1] = stk->steak[ind];
+    stk->steak[ind] = t;
+}
+
+void yank(stack* stk, uint64_t ind) {
+    ind %= stk->size;
+    uint64_t* a = &(stk->steak[ind]);
+    uint64_t* b = &(stk->steak[ind + 1]);
+    uint64_t t = *a;
+    memmove(a, b, sizeof(uint64_t) * (stk->size - ind));
+    stk->steak[stk->size - 1] = t;
+}
+
+void shove(stack* stk, uint64_t ind) {
+    ind %= stk->size;
+    uint64_t* a = &(stk->steak[ind]);
+    uint64_t* b = &(stk->steak[ind + 1]);
+    uint64_t t = stk->steak[stk->size - 1];
+    memmove(b, a, sizeof(uint64_t) * (stk->size - 1 - ind));
+    *a = t;
+}
+
+void run(prog* p, stack* stk, uint64_t steps) {
     uint64_t i, tval;
     void* instrTable[CNT] = {
             &&i0,
@@ -39,223 +77,403 @@ void run(prog* p, uint64_t* mem, uint64_t steps) {
 #define ptr (p->iptr)
 #define reg(x) (mem[p->code[x]])
 #define code(x) (p->code[x])
+// #define DEBUG
 
     ptr = 0;
     for (i = 0; i < steps; ++i) {
-        if (ptr > p->csize - 4) break;
+        if (ptr > p->csize - 9) break;
 
         goto *instrTable[code(ptr) & 0b11111U];
 
         /* add */
         i0:
-        reg(ptr + 1) = reg(ptr + 2) + reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a + b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* sub */
         i1:
-        reg(ptr + 1) = reg(ptr + 2) - reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a - b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* mul */
         i2:
-        reg(ptr + 1) = reg(ptr + 2) * reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a * b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* div */
         i3:
-        if (reg(ptr + 3)) reg(ptr + 1) = reg(ptr + 2) / reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            if (b) {
+                uint64_t c = a / b;
+                push(stk, c);
+            }
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* mod */
         i4:
-        if (reg(ptr + 3)) reg(ptr + 1) = reg(ptr + 2) % reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            if (b) {
+                uint64_t c = a % b;
+                push(stk, c);
+            }
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* and */
         i5:
-        reg(ptr + 1) = reg(ptr + 2) & reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a & b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* or */
         i6:
-        reg(ptr + 1) = reg(ptr + 2) | reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a | b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* xor */
         i7:
-        reg(ptr + 1) = reg(ptr + 2) ^ reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a ^ b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* not */
         i8:
-        reg(ptr + 1) = !reg(ptr + 2);
-        ptr += 3;
+        if (stk->size >= 1) {
+            uint64_t a = pop(stk);
+            uint64_t b = !a;
+            push(stk, b);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* flip */
         i9:
-        reg(ptr + 1) = ~reg(ptr + 2);
-        ptr += 3;
+        if (stk->size >= 1) {
+            uint64_t a = pop(stk);
+            uint64_t b = ~a;
+            push(stk, b);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* shl */
         i10:
-        reg(ptr + 1) = reg(ptr + 2) << reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a << b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* shr */
         i11:
-        reg(ptr + 1) = reg(ptr + 2) >> reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a >> b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
-        /* minv */
+        /* log2 */
         i12:
-        /* TODO */
+        if (stk->size >= 1) {
+            uint64_t a = pop(stk);
+            uint64_t b = 63LU - __builtin_clzll((a) | 1LU);
+            push(stk, b);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
         ptr++;
         continue;
 
         /* gt */
         i13:
-        reg(ptr + 1) = reg(ptr + 2) > reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a > b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* lt */
         i14:
-        reg(ptr + 1) = reg(ptr + 2) < reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a < b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* gte */
         i15:
-        reg(ptr + 1) = reg(ptr + 2) >= reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a >= b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* lte */
         i16:
-        reg(ptr + 1) = reg(ptr + 2) <= reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a <= b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* eq */
         i17:
-        reg(ptr + 1) = reg(ptr + 2) == reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a == b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* ne */
         i18:
-        reg(ptr + 1) = reg(ptr + 2) != reg(ptr + 3);
-        ptr += 4;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            uint64_t c = a != b;
+            push(stk, c);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* mv */
         i19:
-        ptr = reg(ptr + 1);
-        ptr += 2;
+        if (stk->size >= 1) {
+            uint64_t a = pop(stk);
+            ptr = a;
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
-        /* mvr */
+        /* bze */
         i20:
-        ptr += reg(ptr + 1);
-        ptr += 2;
+        if (stk->size >= 2) {
+            uint64_t a = pop(stk);
+            uint64_t b = pop(stk);
+            if (!a) {
+                ptr = b;
+            } else {
+                ptr++;
+            }
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
         continue;
 
-        /* cpy */
+        /* dup */
         i21:
-        reg(ptr + 1) = reg(ptr + 2);
-        ptr += 3;
+        if (stk->size >= 1) {
+            uint64_t a = pop(stk);
+            push(stk, a);
+            push(stk, a);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
-        /* set 0 */
+        /* pop */
         i22:
-        tval = code(ptr + 2);
-        reg(ptr + 1) &= 0xFFFFFFFFFFFFFF00LU;
-        reg(ptr + 1) |= tval;
-        ptr += 3;
+        if (stk->size >= 1) {
+            pop(stk);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
-        /* set 1 */
+        /* swap */
         i23:
-        tval = code(ptr + 2);
-        tval <<= 8LU;
-        reg(ptr + 1) &= 0xFFFFFFFFFFFF00FFLU;
-        reg(ptr + 1) |= tval;
-        ptr += 3;
+        if (stk->size >= 3) {
+            uint64_t a = pop(stk);
+            swap(stk, a);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
-        /* set 2 */
+        /* yank */
         i24:
-        tval = code(ptr + 2);
-        tval <<= 16U;
-        reg(ptr + 1) &= 0xFFFFFFFFFF00FFFFLU;
-        reg(ptr + 1) |= tval;
-        ptr += 3;
+        if (stk->size >= 3) {
+            uint64_t a = pop(stk);
+            yank(stk, a);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
-        /* set 3 */
+        /* shove */
         i25:
-        tval = code(ptr + 2);
-        tval <<= 24U;
-        reg(ptr + 1) &= 0xFFFFFFFF00FFFFFFLU;
-        reg(ptr + 1) |= tval;
-        ptr += 3;
+        if (stk->size >= 3) {
+            uint64_t a = pop(stk);
+            shove(stk, a);
+#ifdef DEBUG
+            printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        }
+        ptr++;
         continue;
 
         /* set 4 */
         i26:
-        tval = code(ptr + 2);
-        tval <<= 32U;
-        reg(ptr + 1) &= 0xFFFFFF00FFFFFFFFLU;
-        reg(ptr + 1) |= tval;
-        ptr += 3;
+        ptr++;
         continue;
 
         /* set 5 */
         i27:
-        tval = code(ptr + 2);
-        tval <<= 40U;
-        reg(ptr + 1) &= 0xFFFF00FFFFFFFFFFLU;
-        reg(ptr + 1) |= tval;
-        ptr += 3;
+        ptr++;
         continue;
 
         /* set 6 */
         i28:
-        tval = code(ptr + 2);
-        tval <<= 48U;
-        reg(ptr + 1) &= 0xFF00FFFFFFFFFFFFLU;
-        reg(ptr + 1) |= tval;
-        ptr += 3;
+        ptr++;
         continue;
 
         /* set 7 */
         i29:
-        tval = code(ptr + 2);
-        tval <<= 56U;
-        reg(ptr + 1) &= 0x00FFFFFFFFFFFFFFLU;
-        reg(ptr + 1) |= tval;
-        ptr += 3;
+        ptr++;
         continue;
 
-        /* nop */
+        /* set */
         i30:
-        ptr++;
+        push(stk, *((uint64_t*) (&(code(ptr + 1)))));
+#ifdef DEBUG
+        printf("%10s\n", instrNames[code(ptr) & 0b11111U]);
+#endif
+        ptr += 9;
         continue;
 
         /* halt */
         i31:
+#ifdef DEBUG
+        printf("%10s : halt\n");
+#endif
         break;
     }
     p->steps = i;

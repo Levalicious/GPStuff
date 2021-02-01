@@ -16,7 +16,7 @@ typedef enum {
     flip,
     shl,
     shr,
-    minv, /* CURRENTLY A NOP */
+    log2instr,
     gt,
     lt,
     gte,
@@ -24,17 +24,17 @@ typedef enum {
     eq,
     ne,
     mv,
-    mvr,
-    cpy,
-    set0,
-    set1,
-    set2,
-    set3,
+    bze,
+    dupp,
+    popp,
+    swapp,
+    yankk,
+    shovee,
     set4,
     set5,
     set6,
     set7,
-    nop,
+    set,
     halt,
     CNT
 } instr;
@@ -52,7 +52,7 @@ static char* instrNames[CNT] = {
         "flip",
         "shl",
         "shr",
-        "minv",
+        "log2",
         "gt",
         "lt",
         "gte",
@@ -60,19 +60,24 @@ static char* instrNames[CNT] = {
         "eq",
         "ne",
         "mv",
-        "mvr",
-        "cpy",
-        "set0",
-        "set1",
+        "bze",
+        "dup",
+        "pop",
+        "swap",
         "set2",
         "set3",
         "set4",
         "set5",
         "set6",
         "set7",
-        "nop",
+        "set",
         "halt",
 };
+
+typedef struct {
+    uint64_t* steak;
+    uint64_t size;
+} stack;
 
 typedef struct {
     uint8_t* code;
@@ -84,6 +89,10 @@ typedef struct {
     uint64_t steps;
 } prog;
 
-void run(prog* p, uint64_t* mem, uint64_t steps);
+
+void push(stack* stk, uint64_t val);
+uint64_t pop(stack* stk);
+
+void run(prog* p, stack* stk, uint64_t steps);
 
 #endif
